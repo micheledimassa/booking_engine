@@ -3,10 +3,12 @@ version: "3.9"
 services:
   postgres:
     image: postgres:15
+    env_file:
+      - .env
     environment:
-      POSTGRES_DB: flightsearch
-      POSTGRES_USER: flight
-      POSTGRES_PASSWORD: flight
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
       - "5432:5432"
     volumes:
@@ -16,13 +18,15 @@ services:
     build: ./services/flight-search
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: flightsearch
-      DB_USER: flight
-      DB_PASSWORD: flight
-      API_KEY: coccostrello
+      DB_HOST: ${DB_HOST:?set DB_HOST in .env}
+      DB_PORT: ${DB_PORT:?set DB_PORT in .env}
+      DB_NAME: ${DB_NAME:?set DB_NAME in .env}
+      DB_USER: ${DB_USER:?set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      API_KEY: ${API_KEY:?set API_KEY in .env}
     depends_on:
       - postgres
 
