@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: flightsearch
+      POSTGRES_USER: flight
+      POSTGRES_PASSWORD: flight
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  flight-search:
+    build: ./services/flight-search
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: flightsearch
+      DB_USER: flight
+      DB_PASSWORD: flight
+      API_KEY: coccostrello
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
