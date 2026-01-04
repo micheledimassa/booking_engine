@@ -18,9 +18,10 @@ var connString = $"Host={host};Port={port};Database={db};Username={user};Passwor
 var apiKey = Environment.GetEnvironmentVariable("API_KEY")
     ?? throw new InvalidOperationException("Variabile d'ambiente API_KEY mancante.");
 
-// === HEALTH ===
 //c'è async cosi non blocco il thread mentre il db risponde 
-app.MapGet("/health", async () =>
+
+// === HEALTH ===
+app.MapGet("v1/health", async () =>
 {
     await using var conn = new NpgsqlConnection(connString);
     await conn.OpenAsync();
@@ -28,7 +29,7 @@ app.MapGet("/health", async () =>
 });
 
 // === ANDATA/RITORNO ===
-app.MapGet("/flights/andataritorno", async (string from_iata, string to_iata) =>
+app.MapGet("v1/flights/andataritorno", async (string from_iata, string to_iata) =>
 {
     if (string.IsNullOrWhiteSpace(from_iata) || string.IsNullOrWhiteSpace(to_iata))
         return Results.BadRequest("from_iata e to_iata sono obbligatori.");
@@ -162,20 +163,10 @@ app.MapGet("/flights/andataritorno", async (string from_iata, string to_iata) =>
         from = new
         {
             iata = from,
-            name = (string?)null,
-            nome = (string?)null,
-            destinazione = (string?)null,
-            paese = (string?)null,
-            destinazione_nome = (string?)null
         },
         to = new
         {
             iata = to,
-            name = (string?)null,
-            nome = (string?)null,
-            destinazione = (string?)null,
-            paese = (string?)null,
-            destinazione_nome = (string?)null
         }
     };
 
@@ -183,7 +174,7 @@ app.MapGet("/flights/andataritorno", async (string from_iata, string to_iata) =>
 });
 
 // === ANDATA/RITORNO CON DATE ===
-app.MapGet("/flights/andataritornodate", async (string from_iata, string to_iata, DateOnly data_andata, DateOnly data_ritorno) =>
+app.MapGet("v1/flights/andataritornodate", async (string from_iata, string to_iata, DateOnly data_andata, DateOnly data_ritorno) =>
 {
     if (string.IsNullOrWhiteSpace(from_iata) || string.IsNullOrWhiteSpace(to_iata))
         return Results.BadRequest("from_iata e to_iata sono obbligatori.");
@@ -333,8 +324,7 @@ app.MapGet("/flights/andataritornodate", async (string from_iata, string to_iata
 
 // === SYNC FLIGHT === 
 //sia in primo caricamento che in update dei record 
-
-app.MapPost("/sync/flight", async (HttpContext httpContext, FlightSync payload) =>
+app.MapPost("v1/sync/flight", async (HttpContext httpContext, FlightSync payload) =>
 {
     if (!httpContext.Request.Headers.TryGetValue("X-API-Key", out var providedKey) ||
         !string.Equals(providedKey, apiKey, StringComparison.Ordinal))
@@ -401,7 +391,7 @@ app.MapPost("/sync/flight", async (HttpContext httpContext, FlightSync payload) 
 });
 
 //cancella tutti i voli di un gruppo
-app.MapDelete("/sync/group/{gruppo}", async (HttpContext httpContext, string gruppo) =>
+app.MapDelete("v1/sync/group/{gruppo}", async (HttpContext httpContext, string gruppo) =>
 {
     if (!httpContext.Request.Headers.TryGetValue("X-API-Key", out var providedKey) ||
         !string.Equals(providedKey, apiKey, StringComparison.Ordinal))
@@ -417,6 +407,68 @@ app.MapDelete("/sync/group/{gruppo}", async (HttpContext httpContext, string gru
     return affected > 0 ? Results.Ok(new { status = "deleted", records = affected }) : Results.NotFound();
 });
 
+// === INTERNAL INVENTORY API ===
+app.MapGet("internal/flights/{id:guid}", async (Guid id, HttpContext httpContext) =>
+{
+    if (!InternalApiHelper.IsAuthorized(httpContext, apiKey))
+        return Results.Unauthorized();
+
+    await using var conn = new NpgsqlConnection(connString);
+    await conn.OpenAsync();
+
+    var cmd = new NpgsqlCommand(@"
+        SELECT posti_disponibili, is_open
+        FROM search_flight
+        WHERE id = @id
+        ORDER BY updated_at DESC
+        LIMIT 1;
+    ", conn);
+
+    cmd.Parameters.AddWithValue("id", id);
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+        return Results.NotFound(new { error = "Partenza non trovata." });
+
+    var posti = reader.GetInt32(reader.GetOrdinal("posti_disponibili"));
+    var isOpen = reader.GetBoolean(reader.GetOrdinal("is_open"));
+
+    return Results.Ok(new { posti_disponibili = posti, is_open = isOpen });
+});
+
+app.MapPost("internal/flights/{id:guid}/seat-delta", async (Guid id, HttpContext httpContext, SeatDeltaRequest request) =>
+{
+    if (!InternalApiHelper.IsAuthorized(httpContext, apiKey))
+        return Results.Unauthorized();
+
+    if (request is null)
+        return Results.BadRequest(new { error = "Payload mancante." });
+
+    if (request.Delta == 0)
+        return Results.Ok(new { status = "noop" });
+
+    await using var conn = new NpgsqlConnection(connString);
+    await conn.OpenAsync();
+
+    var cmd = new NpgsqlCommand(@"
+        UPDATE search_flight
+        SET posti_disponibili = posti_disponibili - @delta,
+            is_open = CASE WHEN posti_disponibili - @delta <= 0 THEN FALSE ELSE TRUE END,
+            updated_at = now()
+        WHERE id = @id
+          AND (@delta <= 0 OR posti_disponibili - @delta >= 0)
+        RETURNING posti_disponibili;
+    ", conn);
+
+    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue("delta", request.Delta);
+
+    var result = await cmd.ExecuteScalarAsync();
+    if (result is null)
+        return Results.BadRequest(new { error = "Impossibile aggiornare i posti disponibili." });
+
+    return Results.Ok(new { posti_disponibili = (int)result });
+});
 
 app.Run("http://0.0.0.0:8080");
 
@@ -462,3 +514,14 @@ class FlightGroup
         else if (seg.Direzione == "R") { Ritorno.Add(seg); PrezzoRitorno += seg.Prezzo; }
     }
 }
+
+static class InternalApiHelper
+{
+    public static bool IsAuthorized(HttpContext httpContext, string apiKey)
+    {
+        return httpContext.Request.Headers.TryGetValue("X-API-Key", out var providedKey)
+            && string.Equals(providedKey, apiKey, StringComparison.Ordinal);
+    }
+}
+
+record SeatDeltaRequest(int Delta);

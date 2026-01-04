@@ -30,5 +30,39 @@ services:
     depends_on:
       - postgres
 
+  booking-db:
+    image: postgres:15
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${BOOKING_DB_NAME:?set BOOKING_DB_NAME in .env}
+      POSTGRES_USER: ${BOOKING_DB_USER:?set BOOKING_DB_USER in .env}
+      POSTGRES_PASSWORD: ${BOOKING_DB_PASSWORD:?set BOOKING_DB_PASSWORD in .env}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_booking:/var/lib/postgresql/data
+
+  flight-booking:
+    build: ./services/flight-booking
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: ${BOOKING_DB_HOST:?set BOOKING_DB_HOST in .env}
+      DB_PORT: ${BOOKING_DB_PORT:?set BOOKING_DB_PORT in .env}
+      DB_NAME: ${BOOKING_DB_NAME:?set BOOKING_DB_NAME in .env}
+      DB_USER: ${BOOKING_DB_USER:?set BOOKING_DB_USER in .env}
+      DB_PASSWORD: ${BOOKING_DB_PASSWORD:?set BOOKING_DB_PASSWORD in .env}
+      FRAPPE_BASE_URL: ${FRAPPE_BASE_URL:?set FRAPPE_BASE_URL in .env}
+      FRAPPE_API_KEY: ${FRAPPE_API_KEY:?set FRAPPE_API_KEY in .env}
+      FRAPPE_BOOKING_ENDPOINT: ${FRAPPE_BOOKING_ENDPOINT:-/api/method/tour_operator.api.booking_webhook.receive_booking}
+      FLIGHT_SEARCH_BASE_URL: ${FLIGHT_SEARCH_BASE_URL:?set FLIGHT_SEARCH_BASE_URL in .env}
+      FLIGHT_SEARCH_API_KEY: ${FLIGHT_SEARCH_API_KEY:?set FLIGHT_SEARCH_API_KEY in .env}
+    depends_on:
+      - booking-db
+
 volumes:
   pgdata:
+  pgdata_booking:
