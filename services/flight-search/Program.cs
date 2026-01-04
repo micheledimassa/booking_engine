@@ -326,12 +326,6 @@ app.MapGet("v1/flights/andataritornodate", async (string from_iata, string to_ia
 //sia in primo caricamento che in update dei record 
 app.MapPost("v1/sync/flight", async (HttpContext httpContext, FlightSync payload) =>
 {
-    if (!httpContext.Request.Headers.TryGetValue("X-API-Key", out var providedKey) ||
-        !string.Equals(providedKey, apiKey, StringComparison.Ordinal))
-    {
-        return Results.Unauthorized();
-    }
-
     // normalizza per coerenza con le query di ricerca
     var fromIata = payload.From_Iata.Trim().ToUpperInvariant();
     var toIata = payload.To_Iata.Trim().ToUpperInvariant();
@@ -393,9 +387,6 @@ app.MapPost("v1/sync/flight", async (HttpContext httpContext, FlightSync payload
 //cancella tutti i voli di un gruppo
 app.MapDelete("v1/sync/group/{gruppo}", async (HttpContext httpContext, string gruppo) =>
 {
-    if (!httpContext.Request.Headers.TryGetValue("X-API-Key", out var providedKey) ||
-        !string.Equals(providedKey, apiKey, StringComparison.Ordinal))
-        return Results.Unauthorized();
 
     await using var conn = new NpgsqlConnection(connString);
     await conn.OpenAsync();
@@ -410,8 +401,6 @@ app.MapDelete("v1/sync/group/{gruppo}", async (HttpContext httpContext, string g
 // === INTERNAL INVENTORY API ===
 app.MapGet("internal/flights/{id:guid}", async (Guid id, HttpContext httpContext) =>
 {
-    if (!InternalApiHelper.IsAuthorized(httpContext, apiKey))
-        return Results.Unauthorized();
 
     await using var conn = new NpgsqlConnection(connString);
     await conn.OpenAsync();
@@ -438,8 +427,6 @@ app.MapGet("internal/flights/{id:guid}", async (Guid id, HttpContext httpContext
 
 app.MapPost("internal/flights/{id:guid}/seat-delta", async (Guid id, HttpContext httpContext, SeatDeltaRequest request) =>
 {
-    if (!InternalApiHelper.IsAuthorized(httpContext, apiKey))
-        return Results.Unauthorized();
 
     if (request is null)
         return Results.BadRequest(new { error = "Payload mancante." });

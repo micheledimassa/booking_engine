@@ -1,7 +1,5 @@
-version: "3.9"
-
 services:
-  postgres:
+  flight-db:
     image: postgres:15
     env_file:
       - .env
@@ -28,7 +26,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       API_KEY: ${API_KEY:?set API_KEY in .env}
     depends_on:
-      - postgres
+      - flight-db
 
   booking-db:
     image: postgres:15
