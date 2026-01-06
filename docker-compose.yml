@@ -25,8 +25,14 @@ services:
       DB_USER: ${DB_USER:?set DB_USER in .env}
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       API_KEY: ${API_KEY:?set API_KEY in .env}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:?set RABBITMQ_HOST in .env}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
     depends_on:
       - flight-db
+      - rabbitmq
 
   booking-db:
     image: postgres:15
@@ -58,9 +64,37 @@ services:
       FRAPPE_BOOKING_ENDPOINT: ${FRAPPE_BOOKING_ENDPOINT:-/api/method/tour_operator.api.booking_webhook.receive_booking}
       FLIGHT_SEARCH_BASE_URL: ${FLIGHT_SEARCH_BASE_URL:?set FLIGHT_SEARCH_BASE_URL in .env}
       FLIGHT_SEARCH_API_KEY: ${FLIGHT_SEARCH_API_KEY:?set FLIGHT_SEARCH_API_KEY in .env}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:?set RABBITMQ_HOST in .env}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
     depends_on:
       - booking-db
+      - rabbitmq
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: booking-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    env_file:
+      - .env
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:-booking-cookie}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
 
 volumes:
   pgdata:
   pgdata_booking:
+  rabbitmq_data:

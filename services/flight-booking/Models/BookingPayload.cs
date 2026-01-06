@@ -35,8 +35,8 @@ public sealed record BookingPayload
         if (posti <= 0)
             throw new ArgumentException("Posti non può essere zero.");
 
-        var docStatus = ResolveDocStatus(request.DocStatus, request.Stato);
-        var stato = ResolveState(docStatus, request.Stato);
+        const int docStatus = 0;
+        const string stato = "Bozza";
 
         return new BookingPayload
         {
@@ -56,41 +56,6 @@ public sealed record BookingPayload
         };
     }
 
-    private static int ResolveDocStatus(int? docStatus, string? stato)
-    {
-        if (docStatus.HasValue)
-        {
-            if (docStatus.Value is < 0 or > 2)
-                throw new ArgumentException("DocStatus valido: 0, 1 o 2.");
-            return docStatus.Value;
-        }
-
-        if (string.IsNullOrWhiteSpace(stato))
-            throw new ArgumentException("Fornire DocStatus o Stato.");
-
-        return stato.Trim().ToLowerInvariant() switch
-        {
-            "bozza" => 0,
-            "confermata" => 1,
-            "cancellata" => 2,
-            _ => throw new ArgumentException("Stato non riconosciuto. Valori ammessi: Bozza, Confermata, Cancellata.")
-        };
-    }
-
-    private static string ResolveState(int docStatus, string? stato)
-    {
-        if (!string.IsNullOrWhiteSpace(stato))
-            return Capitalize(stato);
-
-        return docStatus switch
-        {
-            0 => "Bozza",
-            1 => "Confermata",
-            2 => "Cancellata",
-            _ => "Bozza"
-        };
-    }
-
     private static string NormalizeChannel(string? channel)
     {
         if (string.IsNullOrWhiteSpace(channel))
@@ -105,11 +70,4 @@ public sealed record BookingPayload
         };
     }
 
-    private static string Capitalize(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-        value = value.Trim();
-        if (value.Length == 1) return value.ToUpperInvariant();
-        return char.ToUpperInvariant(value[0]) + value[1..].ToLowerInvariant();
-    }
 }

@@ -1,9 +1,11 @@
 using System.Linq;
+using flight_search.Infrastructure;
+using flight_search.Repositories;
+using flight_search.Workers;
 using Npgsql;
 
 // --- CONFIGURAZIONE E AVVIO ---
 var builder = WebApplication.CreateBuilder(args);
-var app = builder.Build();
 
 var host = Environment.GetEnvironmentVariable("DB_HOST");
 var port = Environment.GetEnvironmentVariable("DB_PORT");
@@ -18,7 +20,14 @@ var connString = $"Host={host};Port={port};Database={db};Username={user};Passwor
 var apiKey = Environment.GetEnvironmentVariable("API_KEY")
     ?? throw new InvalidOperationException("Variabile d'ambiente API_KEY mancante.");
 
+builder.Services.AddSingleton<NpgsqlDataSource>(_ => NpgsqlDataSource.Create(connString));
+builder.Services.AddSingleton<IInventoryRepository, InventoryRepository>();
+builder.Services.AddMessagingInfrastructure(builder.Configuration);
+builder.Services.AddHostedService<InventorySeatDeltaWorker>();
+
 //c'è async cosi non blocco il thread mentre il db risponde 
+
+var app = builder.Build();
 
 // === HEALTH ===
 app.MapGet("v1/health", async () =>

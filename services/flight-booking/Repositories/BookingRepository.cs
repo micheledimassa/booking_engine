@@ -129,4 +129,36 @@ public sealed class BookingRepository : IBookingRepository
             LastSyncedAt = reader.IsDBNull(reader.GetOrdinal("last_synced_at")) ? null : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_synced_at"))
         };
     }
+
+    public async Task UpdateStateAsync(Guid bookingId, string state, CancellationToken cancellationToken)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand($@"
+            UPDATE {TableName}
+            SET stato = @stato,
+                updated_at = now()
+            WHERE id = @id;
+        ", conn);
+
+        cmd.Parameters.AddWithValue("stato", state);
+        cmd.Parameters.AddWithValue("id", bookingId);
+
+        var affected = await cmd.ExecuteNonQueryAsync(cancellationToken);
+        if (affected == 0)
+            throw new InvalidOperationException("Prenotazione non trovata durante l'aggiornamento dello stato.");
+    }
+
+    public async Task<BookingPayload?> GetPayloadAsync(Guid bookingId, CancellationToken cancellationToken)
+    {
+        const string sql = $"SELECT raw_payload FROM {TableName} WHERE id = @id";
+        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", bookingId);
+
+        var result = await cmd.ExecuteScalarAsync(cancellationToken) as string;
+        if (string.IsNullOrWhiteSpace(result))
+            return null;
+
+        return JsonSerializer.Deserialize<BookingPayload>(result, SerializerOptions);
+    }
 }

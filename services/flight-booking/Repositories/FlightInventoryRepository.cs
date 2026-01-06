@@ -18,7 +18,7 @@ public sealed class FlightInventoryRepository : IFlightInventoryRepository
             throw new InvalidOperationException("Partenza non specificata.");
 
         if (payload.Partenza_Sync_Id is null)
-            return; // legacy support: assumiamo valido senza sync guid
+            return; 
 
         await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"

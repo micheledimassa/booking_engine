@@ -1,62 +1,103 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using flight_booking.Contracts;
+using flight_booking.Contracts.Messaging;
+using flight_booking.Infrastructure.Messaging;
+using flight_booking.Infrastructure.Outbox;
 using flight_booking.Models;
 using flight_booking.Repositories;
+using Microsoft.Extensions.Options;
 
 namespace flight_booking.Services;
 
+/// <summary>
+/// Gestisce l'ingresso HTTP della prenotazione e orchestra la persistenza + outbox.
+/// La logica di inventory/Frappe è delegata ai worker asincroni.
+/// </summary>
 public sealed class BookingService
 {
+    private static readonly JsonSerializerOptions MessageSerializerOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNamingPolicy = null
+    };
+
     private readonly IBookingRepository _bookingRepository;
-    private readonly IFlightInventoryClient _flightInventoryClient;
-    private readonly FrappeBookingClient _frappeClient;
+    private readonly IOutboxRepository _outboxRepository;
+    private readonly RabbitMqOptions _rabbitOptions;
     private readonly ILogger<BookingService> _logger;
 
     public BookingService(
         IBookingRepository bookingRepository,
-        IFlightInventoryClient flightInventoryClient,
-        FrappeBookingClient frappeClient,
+        IOutboxRepository outboxRepository,
+        IOptions<RabbitMqOptions> rabbitOptions,
         ILogger<BookingService> logger)
     {
         _bookingRepository = bookingRepository;
-        _flightInventoryClient = flightInventoryClient;
-        _frappeClient = frappeClient;
+        _outboxRepository = outboxRepository;
+        _rabbitOptions = rabbitOptions.Value;
         _logger = logger;
     }
 
-    public async Task<BookingSyncResponse> HandleAsync(BookingWebhookRequest request, CancellationToken cancellationToken)
+    public async Task<BookingAcceptedResponse> HandleAsync(BookingWebhookRequest request, CancellationToken cancellationToken)
     {
         var payload = BookingPayload.FromRequest(request);
 
         if (payload.Partenza_Sync_Id is null)
-            throw new InvalidOperationException("Partenza_Sync_Id è obbligatoria per la prenotazione.");
+            throw new InvalidOperationException("Partenza_Sync_Id è obbligatoria per completare la prenotazione.");
 
-        await _flightInventoryClient.EnsureDepartureAvailabilityAsync(payload.Partenza_Sync_Id.Value, payload.Posti, cancellationToken);
-        var previous = await _bookingRepository.UpsertAsync(payload, cancellationToken);
+        payload = payload with { Stato = BookingState.Received };
 
-        BookingSyncResponse? response = null;
+        await _bookingRepository.UpsertAsync(payload, cancellationToken);
+        await PublishBookingRequestedAsync(payload, cancellationToken);
 
-        try
+        _logger.LogInformation("Booking {BookingId} accettata e pubblicata in outbox", payload.Id);
+
+        return new BookingAcceptedResponse
         {
-            response = await _frappeClient.UpsertBookingAsync(payload, cancellationToken);
-            var delta = ComputeSeatDelta(previous, payload, response);
-            await _flightInventoryClient.ApplySeatDeltaAsync(payload.Partenza_Sync_Id.Value, delta, cancellationToken);
-            await _bookingRepository.MarkSyncedAsync(payload.Id, response, cancellationToken);
-            return response;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException)
-        {
-            _logger.LogError(ex, "Errore nel sincronizzare la prenotazione {BookingId}", payload.Id);
-            if (response is not null)
-                await _bookingRepository.MarkSyncedAsync(payload.Id, response, cancellationToken);
-            throw;
-        }
+            BookingId = payload.Id,
+            Status = "RECEIVED"
+        };
     }
 
-    private static int ComputeSeatDelta(BookingRecord? previous, BookingPayload payload, BookingSyncResponse response)
+    private Task PublishBookingRequestedAsync(BookingPayload payload, CancellationToken cancellationToken)
     {
-        var previousSeats = previous is not null && previous.DocStatus == 1 ? previous.Posti : 0;
-        var newSeats = response.DocStatus == 1 ? payload.Posti : 0;
-        return newSeats - previousSeats;
-    }
+        var message = new BookingRequestedMessage
+        {
+            MessageId = Guid.NewGuid(),
+            BookingId = payload.Id,
+            CorrelationId = payload.Id,
+            IdempotencyKey = $"{payload.Id}:booking.requested",
+            PartenzaSyncId = payload.Partenza_Sync_Id,
+            PartenzaId = payload.Partenza_Id,
+            Posti = payload.Posti,
+            ImportoTotale = payload.Importo_Totale,
+            Canale = payload.Canale,
+            Gruppo = payload.Gruppo,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
 
+        var payloadJson = JsonSerializer.SerializeToNode(message, MessageSerializerOptions) as JsonObject
+                          ?? new JsonObject();
+
+        var headers = new JsonObject
+        {
+            ["x-correlation-id"] = message.CorrelationId.ToString(),
+            ["x-retry-count"] = 0
+        };
+
+        var draft = new OutboxMessageDraft
+        {
+            AggregateId = message.BookingId,
+            Type = "booking.requested",
+            Exchange = _rabbitOptions.BookingExchange,
+            RoutingKey = "booking.requested",
+            Payload = payloadJson,
+            Headers = headers,
+            MessageId = message.MessageId.ToString(),
+            CorrelationId = message.CorrelationId.ToString(),
+            IdempotencyKey = message.IdempotencyKey
+        };
+
+        return _outboxRepository.EnqueueAsync(draft, cancellationToken);
+    }
 }
